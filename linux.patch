@@ -107,7 +107,7 @@ index dafbf581c515..791687363cbf 100644
  };
  
 diff --git a/arch/x86/kernel/cpu/amd.c b/arch/x86/kernel/cpu/amd.c
-index d61df70d6875..4219a922e26a 100644
+index d61df70d6875..2483c7123a9f 100644
 --- a/arch/x86/kernel/cpu/amd.c
 +++ b/arch/x86/kernel/cpu/amd.c
 @@ -1166,6 +1166,11 @@ static void init_amd(struct cpuinfo_x86 *c)
@@ -1224,15 +1224,25 @@ index a3f7dabd4955..77f616a11b1c 100644
   * dmi_name_in_serial - Check if string is in the DMI product serial information
   * @str: string to check for
 diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu.h b/drivers/gpu/drm/amd/amdgpu/amdgpu.h
-index 7b09410d6d8f..be4f84b2e046 100644
+index 7b09410d6d8f..ac0277830aa8 100644
 --- a/drivers/gpu/drm/amd/amdgpu/amdgpu.h
 +++ b/drivers/gpu/drm/amd/amdgpu/amdgpu.h
-@@ -272,6 +272,10 @@ extern int amdgpu_ptl;
+@@ -272,6 +272,20 @@ extern int amdgpu_ptl;
  
  extern uint amdgpu_hdmi_hpd_debounce_delay_ms;
  
 +#ifdef CONFIG_X86_PS5
 +extern int amdgpu_force_1080p;
++
++#define PS5_PRO_GPU_DEVICE_ID_0	0x13da
++#define PS5_PRO_GPU_DEVICE_ID_1	0x13dc
++
++static inline bool amdgpu_is_ps5_pro(struct pci_dev *pdev)
++{
++	return pdev->vendor == PCI_VENDOR_ID_ATI &&
++	       (pdev->device == PS5_PRO_GPU_DEVICE_ID_0 ||
++		pdev->device == PS5_PRO_GPU_DEVICE_ID_1);
++}
 +#endif
 +
  #define AMDGPU_VM_MAX_NUM_CTX			4096
@@ -1274,7 +1284,7 @@ index 8525c45ab209..2dd4929dc913 100644
  	if (amdgpu_read_platform_bios(adev)) {
  		dev_info(adev->dev, "Fetched VBIOS from platform\n");
 diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
-index e84b75c03c6f..539ba07e9853 100644
+index e84b75c03c6f..1709c15b4698 100644
 --- a/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
 +++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
 @@ -1877,6 +1877,26 @@ static int amdgpu_device_parse_gpu_info_fw(struct amdgpu_device *adev)
@@ -1284,7 +1294,7 @@ index e84b75c03c6f..539ba07e9853 100644
 +#ifdef CONFIG_X86_PS5
 +		/* Hardcode gfxinfo. */
 +		adev->gfx.config.max_shader_engines = 2;
-+		adev->gfx.config.max_cu_per_sh = 10;
++		adev->gfx.config.max_cu_per_sh = amdgpu_is_ps5_pro(adev->pdev) ? 16 : 10;
 +		adev->gfx.config.max_sh_per_se = 2;
 +		adev->gfx.config.max_backends_per_se = 8;
 +		adev->gfx.config.max_texture_channel_caches = 16;
@@ -1319,7 +1329,7 @@ index 47e0680ed7b1..73b3bf04ca24 100644
  		break;
  	default:
 diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
-index 1aed121f4ddb..9c54912eafde 100644
+index 1aed121f4ddb..cc21cc15f45e 100644
 --- a/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
 +++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
 @@ -41,6 +41,10 @@
@@ -1346,15 +1356,17 @@ index 1aed121f4ddb..9c54912eafde 100644
  /* These devices are not supported by amdgpu.
   * They are supported by the mach64, r128, radeon drivers
   */
-@@ -2170,6 +2180,7 @@ static const struct pci_device_id pciidlist[] = {
+@@ -2170,7 +2180,9 @@ static const struct pci_device_id pciidlist[] = {
  	{0x1002, 0x7410, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_ALDEBARAN},
  
  	/* CYAN_SKILLFISH */
 +	{0x1002, 0x13DA, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_CYAN_SKILLFISH|AMD_IS_APU},
  	{0x1002, 0x13DB, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_CYAN_SKILLFISH|AMD_IS_APU},
++	{0x1002, 0x13DC, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_CYAN_SKILLFISH|AMD_IS_APU},
  	{0x1002, 0x13F9, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_CYAN_SKILLFISH|AMD_IS_APU},
  	{0x1002, 0x13FA, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_CYAN_SKILLFISH|AMD_IS_APU},
-@@ -2383,6 +2394,11 @@ static int amdgpu_pci_probe(struct pci_dev *pdev,
+ 	{0x1002, 0x13FB, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_CYAN_SKILLFISH|AMD_IS_APU},
+@@ -2383,6 +2395,11 @@ static int amdgpu_pci_probe(struct pci_dev *pdev,
  	int ret, retry = 0, i;
  	bool supports_atomic = false;
  
@@ -1421,10 +1433,44 @@ index fcd81242059e..1844a3231bb2 100644
  	header = (const struct common_firmware_header *)
  		adev->sdma.instance[instance].fw->data;
 diff --git a/drivers/gpu/drm/amd/amdgpu/gfx_v10_0.c b/drivers/gpu/drm/amd/amdgpu/gfx_v10_0.c
-index a9961d504833..ed3e2ffef1b8 100644
+index a9961d504833..5cf2402735cc 100644
 --- a/drivers/gpu/drm/amd/amdgpu/gfx_v10_0.c
 +++ b/drivers/gpu/drm/amd/amdgpu/gfx_v10_0.c
-@@ -4202,6 +4202,14 @@ static void gfx_v10_0_check_gfxoff_flag(struct amdgpu_device *adev)
+@@ -3615,6 +3615,20 @@ static const struct soc15_reg_golden golden_settings_gc_10_0_cyan_skillfish[] =
+ 	SOC15_REG_GOLDEN_VALUE(GC, 0, mmUTCL1_CTRL, 0x00800000, 0x00800000)
+ };
+ 
++#ifdef CONFIG_X86_PS5
++static const struct soc15_reg_golden golden_settings_gc_10_0_cyan_skillfish_ps5_pro[] = {
++	SOC15_REG_GOLDEN_VALUE(GC, 0, mmGRBM_GFX_INDEX, 0xffffffff, 0xe0000000),
++	SOC15_REG_GOLDEN_VALUE(GC, 0, mmGE_PC_CNTL, 0x80000000, 0x80000000),
++	SOC15_REG_GOLDEN_VALUE(GC, 0, mmGFX_PIPE_CONTROL, 0x0003ffff, 0x00010000),
++	SOC15_REG_GOLDEN_VALUE(GC, 0, mmSQ_CONFIG, 0xeffdff7f, 0x02000010),
++	SOC15_REG_GOLDEN_VALUE(GC, 0, mmSQC_CONFIG, 0xffffffff, 0x470a2000),
++	SOC15_REG_GOLDEN_VALUE(GC, 0, mmTA_CNTL_AUX, 0xfff7ffff, 0x0103000a),
++	SOC15_REG_GOLDEN_VALUE(GC, 0, mmDB_DFSM_CONFIG, 0xffffffff, 0x00bb8000),
++	SOC15_REG_GOLDEN_VALUE(GC, 0, mmCB_HW_CONTROL_3, 0xffffffbf, 0xa0000000),
++	SOC15_REG_GOLDEN_VALUE(GC, 0, mmGUS_DRAM_COMBINE_RD_WR_EN, 0x00000fff, 0x00000fff)
++};
++#endif
++
+ static const struct soc15_reg_golden golden_settings_gc_10_3_6[] = {
+ 	SOC15_REG_GOLDEN_VALUE(GC, 0, mmCGTT_SPI_CS_CLK_CTRL, 0xff7f0fff, 0x78000100),
+ 	SOC15_REG_GOLDEN_VALUE(GC, 0, mmCH_PIPE_STEER, 0x000000ff, 0x00000044),
+@@ -3980,6 +3994,12 @@ static void gfx_v10_0_init_golden_registers(struct amdgpu_device *adev)
+ 		soc15_program_register_sequence(adev,
+ 						golden_settings_gc_10_0_cyan_skillfish,
+ 						(const u32)ARRAY_SIZE(golden_settings_gc_10_0_cyan_skillfish));
++#ifdef CONFIG_X86_PS5
++		if (amdgpu_is_ps5_pro(adev->pdev))
++			soc15_program_register_sequence(adev,
++						golden_settings_gc_10_0_cyan_skillfish_ps5_pro,
++						(const u32)ARRAY_SIZE(golden_settings_gc_10_0_cyan_skillfish_ps5_pro));
++#endif
+ 		break;
+ 	case IP_VERSION(10, 3, 6):
+ 		soc15_program_register_sequence(adev,
+@@ -4202,6 +4222,14 @@ static void gfx_v10_0_check_gfxoff_flag(struct amdgpu_device *adev)
  	}
  }
  
@@ -1439,7 +1485,7 @@ index a9961d504833..ed3e2ffef1b8 100644
  static int gfx_v10_0_init_microcode(struct amdgpu_device *adev)
  {
  	char fw_name[53];
-@@ -4224,6 +4232,9 @@ static int gfx_v10_0_init_microcode(struct amdgpu_device *adev)
+@@ -4224,6 +4252,9 @@ static int gfx_v10_0_init_microcode(struct amdgpu_device *adev)
  				   "amdgpu/%s_pfp%s.bin", ucode_prefix, wks);
  	if (err)
  		goto out;
@@ -1449,7 +1495,7 @@ index a9961d504833..ed3e2ffef1b8 100644
  	amdgpu_gfx_cp_init_microcode(adev, AMDGPU_UCODE_ID_CP_PFP);
  
  	err = amdgpu_ucode_request(adev, &adev->gfx.me_fw,
-@@ -4231,6 +4242,9 @@ static int gfx_v10_0_init_microcode(struct amdgpu_device *adev)
+@@ -4231,6 +4262,9 @@ static int gfx_v10_0_init_microcode(struct amdgpu_device *adev)
  				   "amdgpu/%s_me%s.bin", ucode_prefix, wks);
  	if (err)
  		goto out;
@@ -1459,7 +1505,7 @@ index a9961d504833..ed3e2ffef1b8 100644
  	amdgpu_gfx_cp_init_microcode(adev, AMDGPU_UCODE_ID_CP_ME);
  
  	err = amdgpu_ucode_request(adev, &adev->gfx.ce_fw,
-@@ -4238,6 +4252,9 @@ static int gfx_v10_0_init_microcode(struct amdgpu_device *adev)
+@@ -4238,6 +4272,9 @@ static int gfx_v10_0_init_microcode(struct amdgpu_device *adev)
  				   "amdgpu/%s_ce%s.bin", ucode_prefix, wks);
  	if (err)
  		goto out;
@@ -1469,7 +1515,7 @@ index a9961d504833..ed3e2ffef1b8 100644
  	amdgpu_gfx_cp_init_microcode(adev, AMDGPU_UCODE_ID_CP_CE);
  
  	if (!amdgpu_sriov_vf(adev)) {
-@@ -4245,6 +4262,9 @@ static int gfx_v10_0_init_microcode(struct amdgpu_device *adev)
+@@ -4245,6 +4282,9 @@ static int gfx_v10_0_init_microcode(struct amdgpu_device *adev)
  		err = request_firmware(&adev->gfx.rlc_fw, fw_name, adev->dev);
  		if (err)
  			goto out;
@@ -1479,7 +1525,7 @@ index a9961d504833..ed3e2ffef1b8 100644
  
  		/* don't validate this firmware. There are apparently firmwares
  		 * in the wild with incorrect size in the header
-@@ -4262,6 +4282,9 @@ static int gfx_v10_0_init_microcode(struct amdgpu_device *adev)
+@@ -4262,6 +4302,9 @@ static int gfx_v10_0_init_microcode(struct amdgpu_device *adev)
  				   "amdgpu/%s_mec%s.bin", ucode_prefix, wks);
  	if (err)
  		goto out;
@@ -1489,7 +1535,7 @@ index a9961d504833..ed3e2ffef1b8 100644
  	amdgpu_gfx_cp_init_microcode(adev, AMDGPU_UCODE_ID_CP_MEC1);
  	amdgpu_gfx_cp_init_microcode(adev, AMDGPU_UCODE_ID_CP_MEC1_JT);
  
-@@ -4269,6 +4292,9 @@ static int gfx_v10_0_init_microcode(struct amdgpu_device *adev)
+@@ -4269,6 +4312,9 @@ static int gfx_v10_0_init_microcode(struct amdgpu_device *adev)
  				   AMDGPU_UCODE_REQUIRED,
  				   "amdgpu/%s_mec2%s.bin", ucode_prefix, wks);
  	if (!err) {
@@ -1499,7 +1545,7 @@ index a9961d504833..ed3e2ffef1b8 100644
  		amdgpu_gfx_cp_init_microcode(adev, AMDGPU_UCODE_ID_CP_MEC2);
  		amdgpu_gfx_cp_init_microcode(adev, AMDGPU_UCODE_ID_CP_MEC2_JT);
  	} else {
-@@ -10112,6 +10138,21 @@ static u32 gfx_v10_0_get_cu_active_bitmap_per_sh(struct amdgpu_device *adev)
+@@ -10112,6 +10158,21 @@ static u32 gfx_v10_0_get_cu_active_bitmap_per_sh(struct amdgpu_device *adev)
  	return cu_active_bitmap;
  }
  
@@ -1521,7 +1567,7 @@ index a9961d504833..ed3e2ffef1b8 100644
  static int gfx_v10_0_get_cu_info(struct amdgpu_device *adev,
  				 struct amdgpu_cu_info *cu_info)
  {
-@@ -10125,6 +10166,43 @@ static int gfx_v10_0_get_cu_info(struct amdgpu_device *adev,
+@@ -10125,6 +10186,43 @@ static int gfx_v10_0_get_cu_info(struct amdgpu_device *adev,
  	amdgpu_gfx_parse_disable_cu(adev, disable_masks, 4, 2);
  
  	mutex_lock(&adev->grbm_idx_mutex);
@@ -1770,10 +1816,53 @@ index 5bca5e534277..0944d93f0a0c 100644
  	case 7:
  		bp->cmd_tbl.transmitter_control = transmitter_control_v1_7;
 diff --git a/drivers/gpu/drm/amd/display/dc/clk_mgr/dcn201/dcn201_clk_mgr.c b/drivers/gpu/drm/amd/display/dc/clk_mgr/dcn201/dcn201_clk_mgr.c
-index 76c612ecfe3c..953cd538402b 100644
+index 76c612ecfe3c..118e1bf12a75 100644
 --- a/drivers/gpu/drm/amd/display/dc/clk_mgr/dcn201/dcn201_clk_mgr.c
 +++ b/drivers/gpu/drm/amd/display/dc/clk_mgr/dcn201/dcn201_clk_mgr.c
-@@ -214,4 +214,8 @@ void dcn201_clk_mgr_construct(struct dc_context *ctx,
+@@ -32,6 +32,9 @@
+ #include "dce100/dce_clk_mgr.h"
+ #include "dm_helpers.h"
+ #include "dm_services.h"
++#ifdef CONFIG_X86_PS5
++#include "dal_asic_id.h"
++#endif
+ 
+ #include "cyan_skillfish_ip_offset.h"
+ #include "dcn/dcn_2_0_1_offset.h"
+@@ -64,6 +67,18 @@ static const struct clk_mgr_registers clk_mgr_regs = {
+ 		CLK_COMMON_REG_LIST_DCN_201()
+ };
+ 
++#ifdef CONFIG_X86_PS5
++#define PS5_PRO_CLK4_CLK_PLL_REQ	(CLK_BASE_INNER(0) + 0x4810)
++
++static struct clk_mgr_registers clk_mgr_regs_ps5_pro;
++
++static bool dcn201_is_ps5_pro(struct dc_context *ctx)
++{
++	return ctx->asic_id.chip_id == DEVICE_ID_NV_13DA ||
++	       ctx->asic_id.chip_id == DEVICE_ID_NV_13DC;
++}
++#endif
++
+ static const struct clk_mgr_shift clk_mgr_shift = {
+ 	CLK_COMMON_MASK_SH_LIST_DCN201_BASE(__SHIFT)
+ };
+@@ -186,6 +201,13 @@ void dcn201_clk_mgr_construct(struct dc_context *ctx,
+ 	clk_mgr->base.ctx = ctx;
+ 	clk_mgr->base.funcs = &dcn201_funcs;
+ 	clk_mgr->regs = &clk_mgr_regs;
++#ifdef CONFIG_X86_PS5
++	if (dcn201_is_ps5_pro(ctx)) {
++		clk_mgr_regs_ps5_pro = clk_mgr_regs;
++		clk_mgr_regs_ps5_pro.CLK4_CLK_PLL_REQ = PS5_PRO_CLK4_CLK_PLL_REQ;
++		clk_mgr->regs = &clk_mgr_regs_ps5_pro;
++	}
++#endif
+ 	clk_mgr->clk_mgr_shift = &clk_mgr_shift;
+ 	clk_mgr->clk_mgr_mask = &clk_mgr_mask;
+ 
+@@ -214,4 +236,8 @@ void dcn201_clk_mgr_construct(struct dc_context *ctx,
  			clk_mgr->dfs_bypass_enabled = true;
  
  	dce_clock_read_ss_info(clk_mgr);
@@ -1783,14 +1872,15 @@ index 76c612ecfe3c..953cd538402b 100644
 +#endif
  }
 diff --git a/drivers/gpu/drm/amd/display/dc/core/dc_resource.c b/drivers/gpu/drm/amd/display/dc/core/dc_resource.c
-index 5f6cc1b1f788..861302da4d64 100644
+index 5f6cc1b1f788..cce9d3eb3352 100644
 --- a/drivers/gpu/drm/amd/display/dc/core/dc_resource.c
 +++ b/drivers/gpu/drm/amd/display/dc/core/dc_resource.c
-@@ -208,6 +208,7 @@ enum dce_version resource_parse_asic_id(struct hw_asic_id asic_id)
+@@ -208,6 +208,8 @@ enum dce_version resource_parse_asic_id(struct hw_asic_id asic_id)
  		    asic_id.chip_id == DEVICE_ID_NV_13FA ||
  		    asic_id.chip_id == DEVICE_ID_NV_13FB ||
  		    asic_id.chip_id == DEVICE_ID_NV_13FC ||
 +		    asic_id.chip_id == DEVICE_ID_NV_13DA ||
++		    asic_id.chip_id == DEVICE_ID_NV_13DC ||
  		    asic_id.chip_id == DEVICE_ID_NV_13DB) {
  			dc_version = DCN_VERSION_2_01;
  			break;
@@ -1845,17 +1935,19 @@ index 1cd17a0272bc..6cab0e599abd 100644
  							WPP_BIT_FLAG_DC_DETECTION_DP_CAPS,
  							"result=%u link_index=%u enum dce_version=%d DPCD=0x%04X min_hblank=%u branch_dev_id=0x%x branch_dev_name='%c%c%c%c%c%c'",
 diff --git a/drivers/gpu/drm/amd/display/include/dal_asic_id.h b/drivers/gpu/drm/amd/display/include/dal_asic_id.h
-index ca77d29ebacc..404d519fc1e8 100644
+index ca77d29ebacc..fa31a014c06d 100644
 --- a/drivers/gpu/drm/amd/display/include/dal_asic_id.h
 +++ b/drivers/gpu/drm/amd/display/include/dal_asic_id.h
-@@ -217,6 +217,7 @@ enum {
+@@ -217,7 +217,9 @@ enum {
  #define DEVICE_ID_NV_13FA 0x13FA
  #define DEVICE_ID_NV_13FB 0x13FB
  #define DEVICE_ID_NV_13FC 0x13FC
 +#define DEVICE_ID_NV_13DA 0x13DA
  #define DEVICE_ID_NV_13DB 0x13DB
++#define DEVICE_ID_NV_13DC 0x13DC
  #define FAMILY_VGH 144
  #define DEVICE_ID_VGH_163F 0x163F
+ #define DEVICE_ID_VGH_1435 0x1435
 diff --git a/drivers/gpu/drm/drm_edid.c b/drivers/gpu/drm/drm_edid.c
 index df3c25bac761..8b0b85931945 100644
 --- a/drivers/gpu/drm/drm_edid.c
@@ -5671,7 +5763,7 @@ index 000000000000..5a53c5f719bc
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/ps5/fan.c b/drivers/ps5/fan.c
 new file mode 100644
-index 000000000000..e68819f9e32a
+index 000000000000..c6c64e3cc9ed
 --- /dev/null
 +++ b/drivers/ps5/fan.c
 @@ -0,0 +1,368 @@
