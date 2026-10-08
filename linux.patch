@@ -1402,10 +1402,10 @@ index 404179d79a9d..2d2cd06536e3 100644
  obj-$(CONFIG_PM_DEVFREQ_EVENT)		+= event/
 diff --git a/drivers/devfreq/ps5-gpufreq.c b/drivers/devfreq/ps5-gpufreq.c
 new file mode 100644
-index 000000000000..3f3802800fcf
+index 000000000000..993b9c78e153
 --- /dev/null
 +++ b/drivers/devfreq/ps5-gpufreq.c
-@@ -0,0 +1,312 @@
+@@ -0,0 +1,314 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +
 +#include <linux/cleanup.h>
@@ -1436,9 +1436,6 @@ index 000000000000..3f3802800fcf
 +#define PS5_GFXCLK_MIN_MHZ		400UL
 +#define PS5_GFXCLK_MAX_MHZ		2230UL
 +#define PS5_GFXCLK_DEFAULT_MHZ		2000UL
-+
-+#define PS5_GPU_PCI_VENDOR		0x1002
-+#define PS5_GPU_PCI_DEVICE		0x13fb
 +
 +typedef ktime_t (*ps5_gfx_busy_fn_t)(struct pci_dev *pdev);
 +
@@ -1512,25 +1509,23 @@ index 000000000000..3f3802800fcf
 +
 +static int ps5_gpu_request_mhz(u32 mhz)
 +{
-+	int ret = ps5_gpu_smu_send(PS5_SMU_MSG_REQUEST_GFXCLK, mhz, NULL);
-+
-+	if (!ret)
-+		pr_info("gpu freq set: %u MHz\n", mhz);
-+
-+	return ret;
++	return ps5_gpu_smu_send(PS5_SMU_MSG_REQUEST_GFXCLK, mhz, NULL);
 +}
 +
 +static int ps5_gpufreq_target(struct device *dev, unsigned long *freq, u32 flags)
 +{
 +	unsigned long mhz = *freq / 1000000UL;
++	u32 cur;
 +
 +	if (mhz < PS5_GFXCLK_MIN_MHZ)
 +		mhz = PS5_GFXCLK_MIN_MHZ;
 +	if (mhz > PS5_GFXCLK_MAX_MHZ)
 +		mhz = PS5_GFXCLK_MAX_MHZ;
 +
-+	if (ps5_gpu_request_mhz(mhz))
-+		return -EIO;
++	if (ps5_gpu_query_mhz(&cur) || cur != mhz) {
++		if (ps5_gpu_request_mhz(mhz))
++			return -EIO;
++	}
 +
 +	*freq = mhz * 1000000UL;
 +
@@ -1555,7 +1550,14 @@ index 000000000000..3f3802800fcf
 +		return true;
 +
 +	if (!ps5_gpu_pdev) {
-+		ps5_gpu_pdev = pci_get_device(PS5_GPU_PCI_VENDOR, PS5_GPU_PCI_DEVICE, NULL);
++		struct pci_dev *pdev = NULL;
++
++		while ((pdev = pci_get_class(PCI_CLASS_DISPLAY_VGA << 8, pdev))) {
++			if (pdev->vendor == PCI_VENDOR_ID_ATI) {
++				ps5_gpu_pdev = pdev;
++				break;
++			}
++		}
 +		if (!ps5_gpu_pdev)
 +			return false;
 +	}
