@@ -4,29 +4,45 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CFG="${1:-$SCRIPT_DIR/build.cfg}"
 
-die() { echo "==> ERROR: $*" >&2; exit 1; }
+die() {
+  echo "==> ERROR: $*" >&2
+  exit 1
+}
 log() { echo "==> $*"; }
 
 [ -f "$CFG" ] || die "config not found: $CFG"
 cd "$SCRIPT_DIR"
 source "$CFG"
 
+if [ -f /etc/gentoo-release ]; then
+  SRC_DIR="/usr/src/linux"
+fi
+
 case "$LTO" in
-  full) TARGET_LTO=FullLTO; LOCALVERSION=-PinkSoup ;;
-  thin) TARGET_LTO=ThinLTO; LOCALVERSION=-Clang-ThinLTO ;;
-  none) TARGET_LTO=NoLTO; LOCALVERSION=-Clang-NoLTO ;;
-  *) die "LTO must be full, thin or none (got '$LTO')" ;;
+full)
+  TARGET_LTO=FullLTO
+  LOCALVERSION=-PinkSoup
+  ;;
+thin)
+  TARGET_LTO=ThinLTO
+  LOCALVERSION=-Clang-ThinLTO
+  ;;
+none)
+  TARGET_LTO=NoLTO
+  LOCALVERSION=-Clang-NoLTO
+  ;;
+*) die "LTO must be full, thin or none (got '$LTO')" ;;
 esac
-case "$OPTIMIZE" in performance|size) ;; *) die "OPTIMIZE must be performance or size" ;; esac
+case "$OPTIMIZE" in performance | size) ;; *) die "OPTIMIZE must be performance or size" ;; esac
 for v in CONFIG_ONLY CCACHE STRIP DEPLOY_EFI ZSWAP ZSWAP_SHRINKER ZRAM LZ4 NTSYNC; do
-  case "${!v}" in y|n) ;; *) die "$v must be y or n" ;; esac
+  case "${!v}" in y | n) ;; *) die "$v must be y or n" ;; esac
 done
 
 declare -A COMP_SYM=(
-  [zstd]=ZSTD [lz4]=LZ4 [lz4hc]=LZ4HC [lzo]=LZO [lzo-rle]=LZORLE [deflate]=DEFLATE [842]=842
+  [zstd]=ZSTD [lz4]=LZ4 [lz4hc]=LZ4HC [lzo]=LZO [lzo - rle]=LZORLE [deflate]=DEFLATE [842]=842
 )
 declare -A BACKEND_SYM=(
-  [zstd]=ZSTD [lz4]=LZ4 [lz4hc]=LZ4HC [lzo]=LZO [lzo-rle]=LZO [deflate]=DEFLATE [842]=842
+  [zstd]=ZSTD [lz4]=LZ4 [lz4hc]=LZ4HC [lzo]=LZO [lzo - rle]=LZO [deflate]=DEFLATE [842]=842
 )
 declare -A CRYPTO_SYM=(
   [zstd]=CRYPTO_ZSTD [lz4]=CRYPTO_LZ4 [lz4hc]=CRYPTO_LZ4HC [lzo]=CRYPTO_LZO [deflate]=CRYPTO_DEFLATE [842]=CRYPTO_842
@@ -41,12 +57,14 @@ fi
 [[ "$EFI_BACKUP_KEEP" =~ ^[1-9][0-9]*$ ]] || die "EFI_BACKUP_KEEP must be 1 or more"
 [ "$JOBS" = auto ] && JOBS="$(nproc)"
 
-if command -v mkinitcpio >/dev/null; then
+if command -v dracut >/dev/null; then
+  INITRD_TOOL=dracut
+elif command -v mkinitcpio >/dev/null; then
   INITRD_TOOL=mkinitcpio
 elif command -v update-initramfs >/dev/null; then
   INITRD_TOOL=update-initramfs
 else
-  die "no mkinitcpio or update-initramfs found"
+  die "no dracut, mkinitcpio or update-initramfs found"
 fi
 
 if [ "$DEPLOY_EFI" = y ] && [ "$EFI_DIR" = auto ]; then
@@ -58,14 +76,17 @@ if [ "$DEPLOY_EFI" = y ] && [ "$EFI_DIR" = auto ]; then
     if sudo test -f "$mnt/bzImage"; then
       found+=("$mnt")
     fi
-  done < /proc/mounts
+  done </proc/mounts
   EFI_DIR=""
   if [ "${#found[@]}" -eq 1 ]; then
     while :; do
       read -r -p "==> boot partition is ${found[0]}, is this right? [Y/n] " ans || die "no answer"
       case "$ans" in
-        ""|y|Y) EFI_DIR="${found[0]}"; break ;;
-        n|N) break ;;
+      "" | y | Y)
+        EFI_DIR="${found[0]}"
+        break
+        ;;
+      n | N) break ;;
       esac
     done
   elif [ "${#found[@]}" -gt 1 ]; then
@@ -94,13 +115,13 @@ cleanup() {
 trap cleanup EXIT
 
 swap_have_kb="$(awk 'NR>1 {s+=$3} END {print s+0}' /proc/swaps)"
-swap_want_kb=$(( SWAP_GB * 1024 * 1024 ))
+swap_want_kb=$((SWAP_GB * 1024 * 1024))
 if [ "$swap_want_kb" -gt "$swap_have_kb" ]; then
-  add_mb=$(( (swap_want_kb - swap_have_kb) / 1024 ))
+  add_mb=$(((swap_want_kb - swap_have_kb) / 1024))
   log "swap ${swap_have_kb} kB, want ${SWAP_GB} GB, adding ${add_mb} MB at $SWAP_FILE"
   sudo rm -f "$SWAP_FILE"
-  sudo fallocate -l "${add_mb}M" "$SWAP_FILE" 2>/dev/null \
-    || sudo dd if=/dev/zero of="$SWAP_FILE" bs=1M count="$add_mb" status=none
+  sudo fallocate -l "${add_mb}M" "$SWAP_FILE" 2>/dev/null ||
+    sudo dd if=/dev/zero of="$SWAP_FILE" bs=1M count="$add_mb" status=none
   sudo chmod 600 "$SWAP_FILE"
   sudo mkswap -q "$SWAP_FILE"
   sudo swapon "$SWAP_FILE"
@@ -110,14 +131,14 @@ else
 fi
 
 if [ "$KERNEL_REF" = latest ]; then
-  KERNEL_REF="$(git ls-remote --tags --refs "$KERNEL_REPO_MAINLINE" 'v[0-9]*' \
-    | sed -n 's|.*refs/tags/||p' | grep -E '^v[0-9]+\.[0-9]+(-rc[0-9]+)?$' \
-    | sed -E 's/^(v[0-9]+\.[0-9]+)$/\1-rc999/' | sort -V | tail -1 | sed 's/-rc999$//')" \
-    || die "cannot list tags of $KERNEL_REPO_MAINLINE"
+  KERNEL_REF="$(git ls-remote --tags --refs "$KERNEL_REPO_MAINLINE" 'v[0-9]*' |
+    sed -n 's|.*refs/tags/||p' | grep -E '^v[0-9]+\.[0-9]+(-rc[0-9]+)?$' |
+    sed -E 's/^(v[0-9]+\.[0-9]+)$/\1-rc999/' | sort -V | tail -1 | sed 's/-rc999$//')" ||
+    die "cannot list tags of $KERNEL_REPO_MAINLINE"
   [ -n "$KERNEL_REF" ] || die "no mainline tag found"
 elif [ "$KERNEL_REF" = auto ]; then
-  raw="$(head -n 5 "$PATCHES_DIR/.config" | grep -m1 -oP '^# Linux/\S+ \K[0-9]+\.[0-9]+(\.[0-9]+)?(-rc[0-9]+)?')" \
-    || die "cannot read kernel version from $PATCHES_DIR/.config"
+  raw="$(head -n 5 "$PATCHES_DIR/.config" | grep -m1 -oP '^# Linux/\S+ \K[0-9]+\.[0-9]+(\.[0-9]+)?(-rc[0-9]+)?')" ||
+    die "cannot read kernel version from $PATCHES_DIR/.config"
   base="${raw%%-*}"
   rc=""
   [[ "$raw" == *-rc* ]] && rc="-${raw#*-}"
@@ -150,18 +171,27 @@ if [ -d "$SRC_DIR/.git" ]; then
     fi
     git -C "$SRC_DIR" clean -q -fd -e .ci-kernel-ref -e .ci-patch-sum
     rm -f "$SRC_DIR/.ci-patch-sum"
-    echo "$KERNEL_REF" > "$SRC_DIR/.ci-kernel-ref"
+    echo "$KERNEL_REF" >"$SRC_DIR/.ci-kernel-ref"
   fi
 else
   [ -e "$SRC_DIR" ] && die "$SRC_DIR exists and is not a git tree, not touching it"
   git clone --depth 1 --branch "$KERNEL_REF" "$KERNEL_REPO" "$SRC_DIR"
-  echo "$KERNEL_REF" > "$SRC_DIR/.ci-kernel-ref"
+  echo "$KERNEL_REF" >"$SRC_DIR/.ci-kernel-ref"
 fi
 
 if [ ! -f "$SRC_DIR/.ci-patch-sum" ]; then
-  git -C "$SRC_DIR" apply --exclude=Makefile "$PATCHES_DIR/linux.patch" \
-    || die "linux.patch does not apply on $KERNEL_REF, fix the patch first"
-  echo "$PATCH_SUM" > "$SRC_DIR/.ci-patch-sum"
+  git -C "$SRC_DIR" apply --exclude=Makefile "$PATCHES_DIR/linux.patch" ||
+    die "linux.patch does not apply on $KERNEL_REF, fix the patch first"
+  if [ -f /etc/gentoo-release ]; then
+    for gp in "$PATCHES_DIR"/*.patch; do
+      [ -f "$gp" ] || continue
+      [ "$(basename "$gp")" = "linux.patch" ] && continue
+      log "applying $(basename "$gp")"
+      git -C "$SRC_DIR" apply "$gp" ||
+        log "WARN: $(basename "$gp") did not apply cleanly, skipping"
+    done
+  fi
+  echo "$PATCH_SUM" >"$SRC_DIR/.ci-patch-sum"
 fi
 cp "$PATCHES_DIR/.config" "$SRC_DIR/.config"
 
@@ -178,9 +208,9 @@ if [ -n "$FW_LIST" ]; then
 fi
 
 case "$LTO" in
-  full) kcfg --disable LTO_NONE --disable LTO_CLANG_THIN --enable LTO_CLANG --enable LTO_CLANG_FULL ;;
-  thin) kcfg --disable LTO_NONE --disable LTO_CLANG_FULL --enable LTO_CLANG --enable LTO_CLANG_THIN ;;
-  none) kcfg --disable LTO_CLANG_FULL --disable LTO_CLANG_THIN --disable LTO_CLANG --enable LTO_NONE ;;
+full) kcfg --disable LTO_NONE --disable LTO_CLANG_THIN --enable LTO_CLANG --enable LTO_CLANG_FULL ;;
+thin) kcfg --disable LTO_NONE --disable LTO_CLANG_FULL --enable LTO_CLANG --enable LTO_CLANG_THIN ;;
+none) kcfg --disable LTO_CLANG_FULL --disable LTO_CLANG_THIN --disable LTO_CLANG --enable LTO_NONE ;;
 esac
 
 if [ "$OPTIMIZE" = performance ]; then
@@ -191,19 +221,19 @@ fi
 
 if [ "$STRIP" = y ]; then
   kcfg --disable DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT --disable DEBUG_INFO_DWARF4 \
-       --disable DEBUG_INFO_DWARF5 --enable DEBUG_INFO_NONE
+    --disable DEBUG_INFO_DWARF5 --enable DEBUG_INFO_NONE
 fi
 
 if [ "$LZ4" = y ]; then
   kcfg --enable CRYPTO_LZ4 --enable CRYPTO_LZ4HC --enable LZ4_COMPRESS --enable LZ4HC_COMPRESS \
-       --enable ZRAM_BACKEND_LZ4 --enable ZRAM_BACKEND_LZ4HC
+    --enable ZRAM_BACKEND_LZ4 --enable ZRAM_BACKEND_LZ4HC
 fi
 
 if [ "$ZSWAP" = y ]; then
   kcfg --enable ZSWAP --enable ZSWAP_DEFAULT_ON --enable ZSMALLOC --enable "${CRYPTO_SYM[$ZSWAP_COMPRESSOR]}"
   for c in DEFLATE LZO 842 LZ4 LZ4HC ZSTD; do kcfg --disable "ZSWAP_COMPRESSOR_DEFAULT_$c"; done
   kcfg --enable "ZSWAP_COMPRESSOR_DEFAULT_${COMP_SYM[$ZSWAP_COMPRESSOR]}" \
-       --set-str ZSWAP_COMPRESSOR_DEFAULT "$ZSWAP_COMPRESSOR"
+    --set-str ZSWAP_COMPRESSOR_DEFAULT "$ZSWAP_COMPRESSOR"
   if [ "$ZSWAP_SHRINKER" = y ]; then
     kcfg --enable ZSWAP_SHRINKER_DEFAULT_ON
   else
@@ -224,7 +254,7 @@ if [ "$NTSYNC" = y ]; then
 fi
 
 for op in "${CONFIG_OPS[@]}"; do
-  read -r -a args <<< "$op"
+  read -r -a args <<<"$op"
   kcfg "${args[@]}"
 done
 
@@ -244,9 +274,9 @@ want() {
 }
 log "config check"
 case "$LTO" in
-  full) want LTO_CLANG_FULL y ;;
-  thin) want LTO_CLANG_THIN y ;;
-  none) want LTO_NONE y ;;
+full) want LTO_CLANG_FULL y ;;
+thin) want LTO_CLANG_THIN y ;;
+none) want LTO_NONE y ;;
 esac
 [ "$OPTIMIZE" = performance ] && want CC_OPTIMIZE_FOR_PERFORMANCE y || want CC_OPTIMIZE_FOR_SIZE y
 [ "$STRIP" = y ] && want DEBUG_INFO_NONE y
@@ -343,7 +373,9 @@ if [ -n "$WIFI_SRC" ]; then
   log "Wi-Fi modules in /usr/lib/modules/$KVER/extra/ps5-iw620"
 fi
 
-if [ "$INITRD_TOOL" = mkinitcpio ]; then
+if [ "$INITRD_TOOL" = dracut ]; then
+  sudo dracut --force --no-hostonly --kver "$KVER" "/boot/initrd.img-$KVER"
+elif [ "$INITRD_TOOL" = mkinitcpio ]; then
   sudo mkinitcpio -k "$KVER" -g "/boot/initrd.img-$KVER"
 elif [ -e "/boot/initrd.img-$KVER" ]; then
   sudo update-initramfs -u -k "$KVER"
@@ -357,9 +389,9 @@ if [ "$DEPLOY_EFI" = y ]; then
   new_k="/boot/vmlinuz-$KVER"
   new_i="/boot/initrd.img-$KVER"
   size_of() { sudo stat -c %s "$1" 2>/dev/null || echo 0; }
-  grow=$(( $(size_of "$new_k") - $(size_of "$EFI_DIR/bzImage") + $(size_of "$new_i") - $(size_of "$EFI_DIR/initrd.img") ))
-  free=$(( $(df -B1 --output=avail "$EFI_DIR" | tail -1) ))
-  [ "$grow" -lt $(( free - 4 * 1024 * 1024 )) ] || die "not enough space in $EFI_DIR (need $grow more bytes, $free free)"
+  grow=$(($(size_of "$new_k") - $(size_of "$EFI_DIR/bzImage") + $(size_of "$new_i") - $(size_of "$EFI_DIR/initrd.img")))
+  free=$(($(df -B1 --output=avail "$EFI_DIR" | tail -1)))
+  [ "$grow" -lt $((free - 4 * 1024 * 1024)) ] || die "not enough space in $EFI_DIR (need $grow more bytes, $free free)"
 
   stamp="$(date +%Y%m%d-%H%M%S)"
   bdir="$EFI_BACKUP_DIR/$stamp"
