@@ -41,12 +41,14 @@ fi
 [[ "$EFI_BACKUP_KEEP" =~ ^[1-9][0-9]*$ ]] || die "EFI_BACKUP_KEEP must be 1 or more"
 [ "$JOBS" = auto ] && JOBS="$(nproc)"
 
-if command -v mkinitcpio >/dev/null; then
+if command -v dracut >/dev/null; then
+  INITRD_TOOL=dracut
+elif command -v mkinitcpio >/dev/null; then
   INITRD_TOOL=mkinitcpio
 elif command -v update-initramfs >/dev/null; then
   INITRD_TOOL=update-initramfs
 else
-  die "no mkinitcpio or update-initramfs found"
+  die "no dracut, mkinitcpio or update-initramfs found"
 fi
 
 if [ "$DEPLOY_EFI" = y ] && [ "$EFI_DIR" = auto ]; then
@@ -161,6 +163,15 @@ fi
 if [ ! -f "$SRC_DIR/.ci-patch-sum" ]; then
   git -C "$SRC_DIR" apply --exclude=Makefile "$PATCHES_DIR/linux.patch" \
     || die "linux.patch does not apply on $KERNEL_REF, fix the patch first"
+  if [ -f /etc/gentoo-release ]; then
+    for gp in "$PATCHES_DIR"/*.patch; do
+      [ -f "$gp" ] || continue
+      [ "$(basename "$gp")" = "linux.patch" ] && continue
+      log "applying $(basename "$gp")"
+      git -C "$SRC_DIR" apply "$gp" \
+        || log "WARN: $(basename "$gp") did not apply cleanly, skipping"
+    done
+  fi
   echo "$PATCH_SUM" > "$SRC_DIR/.ci-patch-sum"
 fi
 cp "$PATCHES_DIR/.config" "$SRC_DIR/.config"
@@ -343,7 +354,9 @@ if [ -n "$WIFI_SRC" ]; then
   log "Wi-Fi modules in /usr/lib/modules/$KVER/extra/ps5-iw620"
 fi
 
-if [ "$INITRD_TOOL" = mkinitcpio ]; then
+if [ "$INITRD_TOOL" = dracut ]; then
+  sudo dracut --force --no-hostonly --kver "$KVER" "/boot/initrd.img-$KVER"
+elif [ "$INITRD_TOOL" = mkinitcpio ]; then
   sudo mkinitcpio -k "$KVER" -g "/boot/initrd.img-$KVER"
 elif [ -e "/boot/initrd.img-$KVER" ]; then
   sudo update-initramfs -u -k "$KVER"
