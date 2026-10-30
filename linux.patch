@@ -1112,7 +1112,7 @@ index 000000000000..39cc76f39e06
 +
 +#endif
 diff --git a/drivers/bluetooth/btusb.c b/drivers/bluetooth/btusb.c
-index dc7191bf4234..612237067b12 100644
+index dc7191bf4234..10367dc8baf0 100644
 --- a/drivers/bluetooth/btusb.c
 +++ b/drivers/bluetooth/btusb.c
 @@ -69,6 +69,12 @@ static struct usb_driver btusb_driver;
@@ -1210,7 +1210,7 @@ index dc7191bf4234..612237067b12 100644
 +
 +	if (id->driver_info & BTUSB_BROKEN_EXT_CREATE_CONN) {
 +		hci_set_quirk(hdev, HCI_QUIRK_BROKEN_EXT_CREATE_CONN);
-+		dev_info(&intf->dev, "PS5 btusb: legacy LE scan/create-connection quirks set\n");
++		dev_info(&intf->dev, "PS5 btusb: legacy LE command family quirks set\n");
 +	}
 +
  	if (id->driver_info & BTUSB_BROKEN_EXT_SCAN)
@@ -12616,3 +12616,18 @@ index 24015c73a67f..6c134508a759 100644
  	{ PCI_VDEVICE(ATI, 0x157a),
  	  .driver_data = AZX_DRIVER_ATIHDMI_NS | AZX_DCAPS_PRESET_ATI_HDMI_NS },
  	{ PCI_VDEVICE(ATI, 0x15b3),
+diff --git a/include/net/bluetooth/hci_core.h b/include/net/bluetooth/hci_core.h
+index fa2a367731b5..c6a0a52513a4 100644
+--- a/include/net/bluetooth/hci_core.h
++++ b/include/net/bluetooth/hci_core.h
+@@ -2043,7 +2043,9 @@ void hci_conn_del_sysfs(struct hci_conn *conn);
+ #define use_ext_conn(dev) (((dev)->commands[37] & 0x80) && \
+ 	!hci_test_quirk((dev), HCI_QUIRK_BROKEN_EXT_CREATE_CONN))
+ /* Extended advertising support */
+-#define ext_adv_capable(dev) (((dev)->le_features[1] & HCI_LE_EXT_ADV))
++/* Legacy LE connection commands cannot be mixed with extended advertising. */
++#define ext_adv_capable(dev) (((dev)->le_features[1] & HCI_LE_EXT_ADV) && \
++	!hci_test_quirk((dev), HCI_QUIRK_BROKEN_EXT_CREATE_CONN))
+ 
+ /* Maximum advertising length */
+ #define max_adv_len(dev) \
