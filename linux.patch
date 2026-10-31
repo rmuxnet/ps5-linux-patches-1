@@ -12631,3 +12631,16 @@ index fa2a367731b5..c6a0a52513a4 100644
  
  /* Maximum advertising length */
  #define max_adv_len(dev) \
+diff --git a/net/bluetooth/hidp/core.c b/net/bluetooth/hidp/core.c
+index f5bdf9f1ca63..f7ce9c4e74fd 100644
+--- a/net/bluetooth/hidp/core.c
++++ b/net/bluetooth/hidp/core.c
+@@ -639,6 +639,8 @@
+ 		return 0;
+ 
+ 	memset(&msg, 0, sizeof(msg));
++	/* Keep receiving input when the transmit socket is full. */
++	msg.msg_flags = MSG_DONTWAIT;
+ 
+ 	return kernel_sendmsg(sock, &msg, &iv, 1, len);
+ }
