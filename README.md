@@ -24,7 +24,7 @@ On a PS5 Pro, also install the Viola firmware service, see [firmware/README.md](
 
 ## TODO
 
-- amdgpu smu driver to show correct gpu frequency and temperature
+- amdgpu smu driver to show correct gpu frequency and temperature on the base ps5
 
 ## Bugs
 

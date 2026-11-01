@@ -49,12 +49,12 @@ they get the same sony header handling as the cyan skillfish files, so they need
 
 every ps5 pro change only turns on with the viola firmware:
 
-- amdgpu: golden settings, 64 cus (`max_cu_per_sh = 16`, pro mask for `amdgpu.ps5_cu_unlock`) and the smu backend (gpu clock and temperature)
+- amdgpu: golden settings, 64 cus (`max_cu_per_sh = 16`, pro mask for `amdgpu.ps5_cu_unlock`) and the smu backend (gpu clock, temperature and `gpu_busy_percent`)
 - mp1: bapm set 3 and 30 active wgps requested from the smu, the extra `/dev/mp1` queries
-- the `ps5_thermal` hwmon sensors
+- `ps5-gpufreq` gpu clock scaling, 500-2350 mhz, holding the soc at `ps5_gpufreq.temp_limit` (85 c by default)
 
-without it a ps5 pro (gpu `1002:13da`) runs like before them, and other models (base ps5, bc-250) are not affected.
-the staging service does nothing on them either.
+without it a ps5 pro (gpu `1002:13da` or `1002:13dc`) runs like before them, and gets no `ps5-gpufreq`: its smu mailbox stops answering under the cyan skillfish firmware.
+a base ps5 gets `ps5-gpufreq` only (500-2230 mhz), the bc-250 is not affected, and the staging service does nothing on either.
 `amdgpu.ps5_viola_fw=0` keeps the cyan skillfish firmware.
 
 ## Staging
