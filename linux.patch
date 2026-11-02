@@ -1493,10 +1493,10 @@ index 6c7a39b7f8d2..2c1267ef7df4 100644
  obj-$(CONFIG_X86_POWERNOW_K8)		+= powernow-k8.o
 diff --git a/drivers/cpufreq/ps5-cpufreq.c b/drivers/cpufreq/ps5-cpufreq.c
 new file mode 100644
-index 000000000000..da01ac43f15f
+index 000000000000..cfe6d09fd0f3
 --- /dev/null
 +++ b/drivers/cpufreq/ps5-cpufreq.c
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,116 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +
 +#include <linux/bitfield.h>
@@ -1537,26 +1537,45 @@ index 000000000000..da01ac43f15f
 +	{ .frequency = CPUFREQ_TABLE_END },
 +};
 +
++static int ps5_cpufreq_set_pstate(u32 pstate)
++{
++	u32 arg = PS5_CORE_MASK_ALL | FIELD_PREP(PS5_PSTATE_MASK, pstate);
++
++	return ps5_mp1_send(PS5_SMU_MSG_SET_PSTATE, arg, NULL);
++}
++
 +static int ps5_cpufreq_target_index(struct cpufreq_policy *policy,
 +				    unsigned int index)
 +{
 +	u32 pstate = ps5_freq_table[index].driver_data;
-+	u32 arg;
 +
 +	if (pstate == 0xff)
 +		return mp1_boost_enter(PS5_CPU_MHZ_FLOOR, PS5_CPU_MHZ_CEIL,
 +					PS5_GPU_MHZ_FLOOR, ps5_gpu_mhz_ceil);
 +
-+	arg = PS5_CORE_MASK_ALL | FIELD_PREP(PS5_PSTATE_MASK, pstate);
-+	return ps5_mp1_send(PS5_SMU_MSG_SET_PSTATE, arg, NULL);
++	return ps5_cpufreq_set_pstate(pstate);
++}
++
++static int ps5_cpufreq_set_boost(struct cpufreq_policy *policy, int state)
++{
++	policy->cpuinfo.max_freq = (state ? PS5_CPU_MHZ_CEIL : PS5_CPU_MHZ_FLOOR) * 1000;
++
++	return 0;
 +}
 +
 +static int ps5_cpufreq_cpu_init(struct cpufreq_policy *policy)
 +{
++	int ret;
++
++	ret = ps5_cpufreq_set_pstate(0);
++	if (ret)
++		return ret;
++
 +	cpumask_copy(policy->cpus, cpu_present_mask);
 +	policy->freq_table = ps5_freq_table;
 +	policy->cpuinfo.transition_latency = PS5_TRANSITION_LATENCY_NS;
 +	policy->boost_supported = true;
++	policy->cur = PS5_CPU_MHZ_FLOOR * 1000;
 +
 +	return 0;
 +}
@@ -1567,7 +1586,7 @@ index 000000000000..da01ac43f15f
 +	.verify		= cpufreq_generic_frequency_table_verify,
 +	.target_index	= ps5_cpufreq_target_index,
 +	.init		= ps5_cpufreq_cpu_init,
-+	.set_boost	= cpufreq_boost_set_sw,
++	.set_boost	= ps5_cpufreq_set_boost,
 +	.boost_enabled	= false,
 +};
 +
