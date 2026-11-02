@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CFG="$SCRIPT_DIR/build.cfg"
 REPO=rmuxnet/ps5-linux-patches-1
-SRC_DIR="$(dirname "$SCRIPT_DIR")/linux-release"
+SRC_ARG=""
 OUT_DIR="$(dirname "$SCRIPT_DIR")/release-out"
 PREVIEW=n
 
@@ -12,7 +12,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --preview) PREVIEW=y ;;
     --repo) REPO="$2"; shift ;;
-    --src) SRC_DIR="$2"; shift ;;
+    --src) SRC_ARG="$2"; shift ;;
     --out) OUT_DIR="$2"; shift ;;
     *) CFG="$1" ;;
   esac
@@ -24,6 +24,7 @@ log() { echo "==> $*"; }
 
 [ -f "$CFG" ] || die "config not found: $CFG"
 source "$CFG"
+SRC_DIR="${SRC_ARG:-$(dirname "$SCRIPT_DIR")/linux-release}"
 
 case "$LTO" in
   full) TARGET_LTO=FullLTO; LOCALVERSION=-PinkSoup ;;
