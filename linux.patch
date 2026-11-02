@@ -5281,7 +5281,7 @@ index c0e677328af5..bb304f32a675 100644
  	if ((attr == &sensor_dev_attr_in2_input.dev_attr.attr ||
  	     attr == &sensor_dev_attr_in2_label.dev_attr.attr) &&
 diff --git a/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c b/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
-index bb9620666dae..d0762455f3fc 100644
+index bb9620666dae..9b2deee3f15a 100644
 --- a/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
 +++ b/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
 @@ -33,6 +33,10 @@
@@ -5295,23 +5295,18 @@ index bb9620666dae..d0762455f3fc 100644
  /*
   * DO NOT use these for err/warn/info/debug messages.
   * Use dev_err, dev_warn, dev_info and dev_dbg instead.
-@@ -598,8 +602,143 @@ static const struct pptable_funcs cyan_skillfish_ppt_funcs = {
+@@ -598,8 +602,132 @@ static const struct pptable_funcs cyan_skillfish_ppt_funcs = {
  	.interrupt_work = smu_v11_0_interrupt_work,
  };
  
 +#ifdef CONFIG_X86_PS5
 +/*
 + * Viola firmware has no SMU metrics table. Read the gfx clock from the SMU
-+ * (QueryGfxclk) and the GPU temperature from Tctl.
++ * (QueryGfxclk).
 + */
 +static int ps5_get_gfxclk(struct smu_context *smu, uint32_t *mhz)
 +{
 +	return ps5_mp1_query_gfxclk(mhz);
-+}
-+
-+static int ps5_get_gpu_temp(struct smu_context *smu, int *millidegrees)
-+{
-+	return ps5_soc_temp(millidegrees);
 +}
 +
 +static int ps5_read_sensor(struct smu_context *smu,
@@ -5320,7 +5315,7 @@ index bb9620666dae..d0762455f3fc 100644
 +			   uint32_t *size)
 +{
 +	uint32_t *value = data;
-+	int temp, ret;
++	int ret;
 +
 +	if (!data || !size)
 +		return -EINVAL;
@@ -5331,12 +5326,6 @@ index bb9620666dae..d0762455f3fc 100644
 +		if (ret)
 +			return ret;
 +		*value *= 100;
-+		break;
-+	case AMDGPU_PP_SENSOR_EDGE_TEMP:
-+		ret = ps5_get_gpu_temp(smu, &temp);
-+		if (ret)
-+			return ret;
-+		*value = temp;
 +		break;
 +	case AMDGPU_PP_SENSOR_GPU_LOAD:
 +		*value = amdgpu_fence_ps5_busy_percent(smu->adev);
@@ -18848,10 +18837,10 @@ index fbb62f7c3111..18edd8279773 100644
  extern void dmi_setup(void);
 diff --git a/include/linux/ps5.h b/include/linux/ps5.h
 new file mode 100755
-index 000000000000..47b6a6e4c4f7
+index 000000000000..6aff57125a09
 --- /dev/null
 +++ b/include/linux/ps5.h
-@@ -0,0 +1,236 @@
+@@ -0,0 +1,235 @@
 +/* SPDX-License-Identifier: GPL-2.0-only */
 +
 +#ifndef _LINUX_PS5_H
@@ -19081,7 +19070,6 @@ index 000000000000..47b6a6e4c4f7
 +	return device == 0x13da || device == 0x13dc;
 +}
 +
-+int ps5_soc_temp(int *millidegrees);
 +
 +/* GPU busy time so far, ns. */
 +
