@@ -1115,48 +1115,75 @@ index 000000000000..39cc76f39e06
 +
 +#endif
 diff --git a/drivers/bluetooth/btusb.c b/drivers/bluetooth/btusb.c
-index dc7191bf4234..7ed7fd0c10ef 100644
+index dc7191bf4234..10367dc8baf0 100644
 --- a/drivers/bluetooth/btusb.c
 +++ b/drivers/bluetooth/btusb.c
-@@ -69,6 +69,9 @@ static struct usb_driver btusb_driver;
+@@ -69,6 +69,12 @@ static struct usb_driver btusb_driver;
  #define BTUSB_ACTIONS_SEMI		BIT(27)
  #define BTUSB_BARROT			BIT(28)
  #define BTUSB_BROKEN_EXT_SCAN		BIT(29)
-+#define BTUSB_BROKEN_LE_DEFAULT_PHY	BIT(30)
-+#define BTUSB_NO_AUTOSUSPEND		BIT(31)
-+#define BTUSB_IFNUM_0			BIT(32)
++#define BTUSB_IFNUM_0			BIT(30)
++#define BTUSB_BROKEN_LE_DEFAULT_PHY	BIT(31)
++#define BTUSB_BROKEN_READ_LOCAL_NAME	BIT(32)
++#define BTUSB_NO_AUTOSUSPEND		BIT(33)
++#define BTUSB_BROKEN_EXT_CREATE_CONN	BIT(35)
++#define BTUSB_HCI_IFACE_RECIPIENT   BIT(34)
  
  static const struct usb_device_id btusb_table[] = {
  	/*
-@@ -183,6 +186,13 @@ static const struct usb_device_id btusb_table[] = {
- 	{ USB_DEVICE(0x8087, 0x0a5a),
- 	  .driver_info = BTUSB_INTEL_BOOT | BTUSB_BROKEN_ISOC },
+@@ -189,6 +195,21 @@ static const struct usb_device_id btusb_table[] = {
+ MODULE_DEVICE_TABLE(usb, btusb_table);
  
-+       /* PS5 IW620 Bluetooth device */
+ static const struct usb_device_id quirks_table[] = {
++
++	/* PS5 IW620 Bluetooth (Marvell-lineage). The device reports the
++	 * generic Bluetooth class, so it matches btusb_table first and the
++	 * quirks only take effect from quirks_table.
++	 */
 +	{ USB_DEVICE(0x1286, 0x2059),
 +	  .driver_info = BTUSB_MARVELL |
 +			 BTUSB_IFNUM_0 |
++			 BTUSB_BROKEN_EXT_SCAN |
++			 BTUSB_BROKEN_EXT_CREATE_CONN |
 +			 BTUSB_BROKEN_LE_DEFAULT_PHY |
-+			 BTUSB_NO_AUTOSUSPEND },
++			 BTUSB_BROKEN_READ_LOCAL_NAME |
++			 BTUSB_NO_AUTOSUSPEND |
++			 BTUSB_HCI_IFACE_RECIPIENT },
 +
- 	{ }	/* Terminating entry */
- };
+ 	/* CSR BlueCore devices */
+ 	{ USB_DEVICE(0x0a12, 0x0001), .driver_info = BTUSB_CSR },
  
-@@ -485,6 +495,10 @@ static const struct usb_device_id quirks_table[] = {
- 	{ USB_DEVICE(0x1286, 0x2044), .driver_info = BTUSB_MARVELL },
- 	{ USB_DEVICE(0x1286, 0x2046), .driver_info = BTUSB_MARVELL },
- 	{ USB_DEVICE(0x1286, 0x204e), .driver_info = BTUSB_MARVELL },
-+	{ USB_DEVICE(0x1286, 0x2059), .driver_info = BTUSB_MARVELL |
-+						     BTUSB_IFNUM_0 |
-+						     BTUSB_BROKEN_LE_DEFAULT_PHY |
-+						     BTUSB_NO_AUTOSUSPEND },
+@@ -2186,7 +2207,13 @@ static struct urb *alloc_ctrl_urb(struct hci_dev *hdev, struct sk_buff *skb)
  
- 	/*
- 	 * NXP IW610 BT interfaces (Marvell-lineage silicon, same quirk as
-@@ -4209,6 +4223,10 @@ static int btusb_probe(struct usb_interface *intf,
+ 	dr->bRequestType = data->cmdreq_type;
+ 	dr->bRequest     = data->cmdreq;
+-	dr->wIndex       = 0;
++
++	if (data->match_id->driver_info & BTUSB_HCI_IFACE_RECIPIENT)
++		dr->wIndex = __cpu_to_le16(
++			data->intf->cur_altsetting->desc.bInterfaceNumber);
++	else
++		dr->wIndex = 0;
++
+ 	dr->wValue       = 0;
+ 	dr->wLength      = __cpu_to_le16(skb->len);
+ 
+@@ -4199,6 +4226,8 @@ static int btusb_probe(struct usb_interface *intf,
+ 	    (intf->cur_altsetting->desc.bInterfaceNumber != 2))
+ 		return -ENODEV;
+ 
++
++
+ 	ifnum_base = intf->cur_altsetting->desc.bInterfaceNumber;
+ 
+ 	if (!id->driver_info) {
+@@ -4209,6 +4238,13 @@ static int btusb_probe(struct usb_interface *intf,
  			id = match;
  	}
  
++	/* Must run after the quirks_table lookup above: the generic class
++	 * entries match first and carry no driver_info.
++	 */
 +	if ((id->driver_info & BTUSB_IFNUM_0) &&
 +	    intf->cur_altsetting->desc.bInterfaceNumber != 0)
 +		return -ENODEV;
@@ -1164,17 +1191,35 @@ index dc7191bf4234..7ed7fd0c10ef 100644
  	if (id->driver_info & BTUSB_IGNORE)
  		return -ENODEV;
  
-@@ -4493,6 +4511,9 @@ static int btusb_probe(struct usb_interface *intf,
- 	if (id->driver_info & BTUSB_BROKEN_EXT_SCAN)
- 		hci_set_quirk(hdev, HCI_QUIRK_BROKEN_EXT_SCAN);
+@@ -4239,6 +4275,9 @@ static int btusb_probe(struct usb_interface *intf,
+ 	} else {
+ 		data->cmdreq_type = USB_TYPE_CLASS;
+ 		data->cmdreq = 0x00;
++
++		if (id->driver_info & BTUSB_HCI_IFACE_RECIPIENT)
++			data->cmdreq_type |= USB_RECIP_INTERFACE;
+ 	}
+ 
+ 	data->udev = interface_to_usbdev(intf);
+@@ -4490,6 +4529,17 @@ static int btusb_probe(struct usb_interface *intf,
+ 	if (id->driver_info & BTUSB_INVALID_LE_STATES)
+ 		hci_set_quirk(hdev, HCI_QUIRK_BROKEN_LE_STATES);
  
 +	if (id->driver_info & BTUSB_BROKEN_LE_DEFAULT_PHY)
 +		hci_set_quirk(hdev, HCI_QUIRK_BROKEN_SET_DEFAULT_PHY);
 +
- 	if (id->driver_info & BTUSB_DIGIANSWER) {
- 		data->cmdreq_type = USB_TYPE_VENDOR;
- 		hci_set_quirk(hdev, HCI_QUIRK_RESET_ON_CLOSE);
-@@ -4549,7 +4570,7 @@ static int btusb_probe(struct usb_interface *intf,
++	if (id->driver_info & BTUSB_BROKEN_READ_LOCAL_NAME)
++		hci_set_quirk(hdev, HCI_QUIRK_BROKEN_READ_LOCAL_NAME);
++
++	if (id->driver_info & BTUSB_BROKEN_EXT_CREATE_CONN) {
++		hci_set_quirk(hdev, HCI_QUIRK_BROKEN_EXT_CREATE_CONN);
++		dev_info(&intf->dev, "PS5 btusb: legacy LE command family quirks set\n");
++	}
++
+ 	if (id->driver_info & BTUSB_BROKEN_EXT_SCAN)
+ 		hci_set_quirk(hdev, HCI_QUIRK_BROKEN_EXT_SCAN);
+ 
+@@ -4549,7 +4599,7 @@ static int btusb_probe(struct usb_interface *intf,
  			data->diag = NULL;
  	}
  
@@ -18813,29 +18858,62 @@ index 000000000000..47b6a6e4c4f7
 +
 +#endif /* _LINUX_PS5_H */
 diff --git a/include/net/bluetooth/hci.h b/include/net/bluetooth/hci.h
-index 1641d879dbda..506559dd87f9 100644
+index 1641d879dbda..8acfe1dc3407 100644
 --- a/include/net/bluetooth/hci.h
 +++ b/include/net/bluetooth/hci.h
-@@ -306,6 +306,14 @@ enum {
+@@ -306,6 +306,22 @@ enum {
  	 */
  	HCI_QUIRK_BROKEN_SET_RPA_TIMEOUT,
  
 +	/* When this quirk is set, the HCI_OP_LE_SET_DEFAULT_PHY command is
-+	 * skipped during initialization. This is required for controllers
-+	 * which advertise the command but reject the default 1M PHY request.
-+	 *
-+	 * This quirk can be set before hci_register_dev is called.
-+	 */
++	* skipped during initialization. This is required for controllers
++	* which advertise the command but reject the default 1M PHY request.
++	*
++	* This quirk can be set before hci_register_dev is called.
++	*/
 +	HCI_QUIRK_BROKEN_SET_DEFAULT_PHY,
++
++	/* When this quirk is set, the HCI_OP_READ_LOCAL_NAME command is
++	* skipped during initialization. This is required for controllers
++	* which become unstable when queried for the local name.
++	*
++	* This quirk can be set before hci_register_dev is called.
++	*/
++	HCI_QUIRK_BROKEN_READ_LOCAL_NAME,
 +
  	/*
  	 * When this quirk is set, the HCI_OP_LE_EXT_CREATE_CONN command is
  	 * disabled. This is required for the Actions Semiconductor ATS2851
+diff --git a/include/net/bluetooth/hci_core.h b/include/net/bluetooth/hci_core.h
+index fa2a367731b5..c6a0a52513a4 100644
+--- a/include/net/bluetooth/hci_core.h
++++ b/include/net/bluetooth/hci_core.h
+@@ -2043,7 +2043,9 @@ void hci_conn_del_sysfs(struct hci_conn *conn);
+ #define use_ext_conn(dev) (((dev)->commands[37] & 0x80) && \
+ 	!hci_test_quirk((dev), HCI_QUIRK_BROKEN_EXT_CREATE_CONN))
+ /* Extended advertising support */
+-#define ext_adv_capable(dev) (((dev)->le_features[1] & HCI_LE_EXT_ADV))
++/* Legacy LE connection commands cannot be mixed with extended advertising. */
++#define ext_adv_capable(dev) (((dev)->le_features[1] & HCI_LE_EXT_ADV) && \
++	!hci_test_quirk((dev), HCI_QUIRK_BROKEN_EXT_CREATE_CONN))
+ 
+ /* Maximum advertising length */
+ #define max_adv_len(dev) \
 diff --git a/net/bluetooth/hci_sync.c b/net/bluetooth/hci_sync.c
-index a92a81846e9d..ed8e0f7cb53f 100644
+index a92a81846e9d..65725be44a9d 100644
 --- a/net/bluetooth/hci_sync.c
 +++ b/net/bluetooth/hci_sync.c
-@@ -5115,6 +5115,12 @@ static int hci_le_set_default_phy_sync(struct hci_dev *hdev)
+@@ -3926,6 +3926,9 @@ static int hci_read_dev_class_sync(struct hci_dev *hdev)
+ /* Read Local Name */
+ static int hci_read_local_name_sync(struct hci_dev *hdev)
+ {
++	if (hci_test_quirk(hdev, HCI_QUIRK_BROKEN_READ_LOCAL_NAME))
++		return 0;
++
+ 	return __hci_cmd_sync_status(hdev, HCI_OP_READ_LOCAL_NAME,
+ 				     0, NULL, HCI_CMD_TIMEOUT);
+ }
+@@ -5115,6 +5118,12 @@ static int hci_le_set_default_phy_sync(struct hci_dev *hdev)
  {
  	struct hci_cp_le_set_default_phy cp;
  
@@ -18861,6 +18939,34 @@ index f5bdf9f1ca63..f7ce9c4e74fd 100644
  
  	return kernel_sendmsg(sock, &msg, &iv, 1, len);
  }
+diff --git a/net/bluetooth/l2cap_core.c b/net/bluetooth/l2cap_core.c
+index d87d2dfbce68..5206a7ce4beb 100644
+--- a/net/bluetooth/l2cap_core.c
++++ b/net/bluetooth/l2cap_core.c
+@@ -4129,8 +4129,22 @@ static void l2cap_connect(struct l2cap_conn *conn, struct l2cap_cmd_hdr *cmd,
+ 
+ 	l2cap_chan_lock(pchan);
+ 
+-	/* Check if the ACL is secure enough (if not SDP) */
++	/* Check if the ACL is secure enough (if not SDP).
++	 *
++	 * Some controllers (PS5 MediaTek 0e8d:3603) deliver the remote's
++	 * L2CAP Connection Request on the bulk endpoint before the Encryption
++	 * Change event arrives on the interrupt endpoint. If a link key has
++	 * already been handed over, encryption is on its way: answer
++	 * "pending" and let l2cap_security_cfm() finish (or block) the
++	 * channel once the link is actually encrypted.
++	 */
+ 	if (psm != cpu_to_le16(L2CAP_PSM_SDP) &&
++	    !test_bit(HCI_CONN_ENCRYPT, &conn->hcon->flags) &&
++	    conn->hcon->key_type != 0xff &&
++	    (conn->info_state & L2CAP_INFO_FEAT_MASK_REQ_DONE)) {
++		BT_DBG("conn %p encryption pending, deferring psm 0x%2.2x",
++		       conn, __le16_to_cpu(psm));
++	} else if (psm != cpu_to_le16(L2CAP_PSM_SDP) &&
+ 	    (!hci_conn_check_link_mode(conn->hcon) ||
+ 	    !l2cap_check_enc_key_size(conn->hcon, pchan))) {
+ 		conn->disc_reason = HCI_ERROR_AUTH_FAILURE;
 diff --git a/scripts/setlocalversion b/scripts/setlocalversion
 index 28169d7e143b..44f516daa21d 100755
 --- a/scripts/setlocalversion
