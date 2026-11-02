@@ -127,14 +127,8 @@ Back up the old `bzImage` and `initrd.img` before you do this.
 
 ## Off by default
 
-These work in testing but have only been tried on a few displays and
-consoles, so they stay off until more people have tested them. Add to
-`cmdline.txt` to turn on:
+Add to `cmdline.txt` to turn on:
 
-- `hdmi.frl_4k120=1`: native FRL on FLAVA3, including 4K100/120
-- `hdmi.frl_recovery=1`: retry with a lower format or depth when FRL fails
-- `hdmi.frl_yuv420=1`: use 4:2:0 over FRL when RGB doesn't fit, `2` to prefer it
-- `hdmi.allm=1`: ALLM while the content type is Game, `2` for always
 - `usbc_dp.enable=1`: USB-C DP output, only for USB-C DP devices such as PSVR2.
   It resets any USB device on the front USB-C port, so leave it off when booting from it.
 
