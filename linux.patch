@@ -1115,10 +1115,30 @@ index 000000000000..39cc76f39e06
 +
 +#endif
 diff --git a/drivers/bluetooth/btusb.c b/drivers/bluetooth/btusb.c
-index dc7191bf4234..10367dc8baf0 100644
+index dc7191bf4234..6909f2617583 100644
 --- a/drivers/bluetooth/btusb.c
 +++ b/drivers/bluetooth/btusb.c
-@@ -69,6 +69,12 @@ static struct usb_driver btusb_driver;
+@@ -24,6 +24,8 @@
+ #include <net/bluetooth/hci_core.h>
+ #include <net/bluetooth/hci_drv.h>
+ 
++#include <linux/delay.h>
++#include <linux/jiffies.h>
+ #include "btintel.h"
+ #include "btbcm.h"
+ #include "btrtl.h"
+@@ -34,8 +36,10 @@
+ static bool disable_scofix;
+ static bool force_scofix;
+ static bool enable_autosuspend = IS_ENABLED(CONFIG_BT_HCIBTUSB_AUTOSUSPEND);
++static int ps5_tx_ep = 0x02;
+ static bool enable_poll_sync = IS_ENABLED(CONFIG_BT_HCIBTUSB_POLL_SYNC);
+ static bool reset = true;
++static bool ps5_ep_resync = false;
+ 
+ static struct usb_driver btusb_driver;
+ 
+@@ -69,8 +73,18 @@ static struct usb_driver btusb_driver;
  #define BTUSB_ACTIONS_SEMI		BIT(27)
  #define BTUSB_BARROT			BIT(28)
  #define BTUSB_BROKEN_EXT_SCAN		BIT(29)
@@ -1130,8 +1150,14 @@ index dc7191bf4234..10367dc8baf0 100644
 +#define BTUSB_HCI_IFACE_RECIPIENT   BIT(34)
  
  static const struct usb_device_id btusb_table[] = {
++    /* PS5 Pro Viola: MediaTek Bluetooth HCI on interface 3 */
++    { USB_DEVICE(0x0e8d, 0x3605),
++      .driver_info = BTUSB_MEDIATEK },
++
  	/*
-@@ -189,6 +195,21 @@ static const struct usb_device_id btusb_table[] = {
+ 	 * NXP IW610 (0471:0215): the composite device reports Bluetooth
+ 	 * class at the whole-device level, so the generic entry below
+@@ -189,6 +203,21 @@ static const struct usb_device_id btusb_table[] = {
  MODULE_DEVICE_TABLE(usb, btusb_table);
  
  static const struct usb_device_id quirks_table[] = {
@@ -1153,7 +1179,7 @@ index dc7191bf4234..10367dc8baf0 100644
  	/* CSR BlueCore devices */
  	{ USB_DEVICE(0x0a12, 0x0001), .driver_info = BTUSB_CSR },
  
-@@ -2186,7 +2207,13 @@ static struct urb *alloc_ctrl_urb(struct hci_dev *hdev, struct sk_buff *skb)
+@@ -2186,7 +2215,17 @@ static struct urb *alloc_ctrl_urb(struct hci_dev *hdev, struct sk_buff *skb)
  
  	dr->bRequestType = data->cmdreq_type;
  	dr->bRequest     = data->cmdreq;
@@ -1163,12 +1189,140 @@ index dc7191bf4234..10367dc8baf0 100644
 +		dr->wIndex = __cpu_to_le16(
 +			data->intf->cur_altsetting->desc.bInterfaceNumber);
 +	else
-+		dr->wIndex = 0;
++		/* PS5 Pro (Viola) 0e8d:3605: HCI commands go to its interface 3 (QuartConz) */
++		dr->wIndex = cpu_to_le16(
++			data->cmdreq_type == (USB_TYPE_CLASS | USB_RECIP_INTERFACE) &&
++			le16_to_cpu(data->udev->descriptor.idVendor) == 0x0e8d &&
++			le16_to_cpu(data->udev->descriptor.idProduct) == 0x3605 ? 3 : 0);
 +
  	dr->wValue       = 0;
  	dr->wLength      = __cpu_to_le16(skb->len);
  
-@@ -4199,6 +4226,8 @@ static int btusb_probe(struct usb_interface *intf,
+@@ -3024,6 +3063,8 @@ static int btusb_mtk_setup(struct hci_dev *hdev)
+ 	struct btusb_data *data = hci_get_drvdata(hdev);
+ 	struct btmtk_data *btmtk_data = hci_get_priv(hdev);
+ 	int err;
++    bool viola = le16_to_cpu(data->udev->descriptor.idVendor) == 0x0e8d &&
++                 le16_to_cpu(data->udev->descriptor.idProduct) == 0x3605;
+ 
+ 	/* MediaTek WMT vendor cmd requiring below USB resources to
+ 	 * complete the handshake.
+@@ -3035,7 +3076,7 @@ static int btusb_mtk_setup(struct hci_dev *hdev)
+ 	btmtk_data->reset_sync = btusb_mtk_reset;
+ 
+ 	/* Claim ISO data interface and endpoint */
+-	if (!test_bit(BTMTK_ISOPKT_OVER_INTR, &btmtk_data->flags)) {
++	if (!viola && !test_bit(BTMTK_ISOPKT_OVER_INTR, &btmtk_data->flags)) {
+ 		btmtk_data->isopkt_intf = usb_ifnum_to_if(data->udev, MTK_ISO_IFNUM);
+ 		btusb_mtk_claim_iso_intf(data);
+ 	}
+@@ -3044,6 +3085,95 @@ static int btusb_mtk_setup(struct hci_dev *hdev)
+ 	if (err)
+ 		return err;
+ 
++
++
++    if (viola) {
++        static const u8 wmt_on_if3[] = {
++            0x6f, 0xfc, 0x06, 0x01, 0x06,
++            0x02, 0x00, 0x00, 0x01
++        };
++        u8 *buf;
++        int ret;
++
++        bt_dev_info(hdev, "Viola IF3 activation started");
++
++        buf = kmemdup(wmt_on_if3, sizeof(wmt_on_if3),
++                      GFP_KERNEL);
++        if (!buf)
++            return -ENOMEM;
++
++        ret = usb_control_msg(
++            data->udev,
++            usb_sndctrlpipe(data->udev, 0),
++            0,
++            USB_TYPE_CLASS | USB_RECIP_INTERFACE,
++            0, 3,
++            buf, sizeof(wmt_on_if3),
++            USB_CTRL_SET_TIMEOUT
++        );
++
++        kfree(buf);
++
++        if (ret != sizeof(wmt_on_if3)) {
++            err = ret < 0 ? ret : -EIO;
++            bt_dev_err(hdev,
++                       "Viola IF3 activation USB error: %d",
++                       err);
++            return err;
++        }
++
++        /*
++         * Viola: IF3 WMT response path is unverified.
++         * Validate activation via subsequent HCI commands.
++         */
++        data->cmdreq_type =
++            USB_TYPE_CLASS | USB_RECIP_INTERFACE;
++
++        bt_dev_info(hdev,
++                    "Viola IF3 WMT sent; HCI routed to IF3");
++    }
++
++
++	/*
++	 * PS5 Pro (0e8d:3605): btmtk_usb_setup() makes the chip reset its USB
++	 * endpoints (MTK_EP_RST_OPT) after the firmware download, while the
++	 * interrupt and bulk-in URBs submitted in btusb_open() are still
++	 * pending from before. No HCI event ever reaches the host afterwards.
++	 * Kill those URBs, resynchronise both sides of the endpoints with
++	 * CLEAR_FEATURE(ENDPOINT_HALT) and submit fresh URBs.
++	 */
++	if (ps5_ep_resync &&
++	    le16_to_cpu(data->udev->descriptor.idVendor) == 0x0e8d &&
++	    le16_to_cpu(data->udev->descriptor.idProduct) == 0x3605) {
++		bool intr = test_bit(BTUSB_INTR_RUNNING, &data->flags);
++		bool bulk = test_bit(BTUSB_BULK_RUNNING, &data->flags);
++		int r_intr = 0, r_rx = 0, r_tx = 0, s_intr = 0, s_bulk = 0;
++
++		usb_kill_anchored_urbs(&data->intr_anchor);
++		usb_kill_anchored_urbs(&data->bulk_anchor);
++
++		if (data->intr_ep)
++			r_intr = usb_clear_halt(data->udev,
++				usb_rcvintpipe(data->udev, data->intr_ep->bEndpointAddress));
++		if (data->bulk_rx_ep)
++			r_rx = usb_clear_halt(data->udev,
++				usb_rcvbulkpipe(data->udev, data->bulk_rx_ep->bEndpointAddress));
++		if (data->bulk_tx_ep)
++			r_tx = usb_clear_halt(data->udev,
++				usb_sndbulkpipe(data->udev, data->bulk_tx_ep->bEndpointAddress));
++
++		if (intr)
++			s_intr = btusb_submit_intr_urb(hdev, GFP_KERNEL);
++		if (bulk) {
++			s_bulk = btusb_submit_bulk_urb(hdev, GFP_KERNEL);
++			if (!s_bulk)
++				btusb_submit_bulk_urb(hdev, GFP_KERNEL);
++		}
++
++		bt_dev_info(hdev, "PS5: endpoint resync clear_halt intr=%d rx=%d tx=%d, resubmit intr=%d bulk=%d",
++			    r_intr, r_rx, r_tx, s_intr, s_bulk);
++	}
++
+ 	switch (btmtk_data->dev_id) {
+ 	case 0x7922:
+ 	case 0x7925:
+@@ -4194,11 +4324,18 @@ static int btusb_probe(struct usb_interface *intf,
+ 
+ 	BT_DBG("intf %p id %p", intf, id);
+ 
++	if (le16_to_cpu(interface_to_usbdev(intf)->descriptor.idVendor) == 0x0e8d &&
++	    le16_to_cpu(interface_to_usbdev(intf)->descriptor.idProduct) == 0x3605 &&
++	    intf->cur_altsetting->desc.bInterfaceNumber != 3)
++		return -ENODEV;
++
+ 	if ((id->driver_info & BTUSB_IFNUM_2) &&
+ 	    (intf->cur_altsetting->desc.bInterfaceNumber != 0) &&
  	    (intf->cur_altsetting->desc.bInterfaceNumber != 2))
  		return -ENODEV;
  
@@ -1177,7 +1331,7 @@ index dc7191bf4234..10367dc8baf0 100644
  	ifnum_base = intf->cur_altsetting->desc.bInterfaceNumber;
  
  	if (!id->driver_info) {
-@@ -4209,6 +4238,13 @@ static int btusb_probe(struct usb_interface *intf,
+@@ -4209,6 +4346,13 @@ static int btusb_probe(struct usb_interface *intf,
  			id = match;
  	}
  
@@ -1191,7 +1345,68 @@ index dc7191bf4234..10367dc8baf0 100644
  	if (id->driver_info & BTUSB_IGNORE)
  		return -ENODEV;
  
-@@ -4239,6 +4275,9 @@ static int btusb_probe(struct usb_interface *intf,
+@@ -4233,12 +4377,70 @@ static int btusb_probe(struct usb_interface *intf,
+ 	if (err)
+ 		goto err_free_data;
+ 
++	/* PS5 MediaTek (0e8d:3603): the chip only drains ACL data from the
++	 * second bulk OUT endpoint (0x02), the one paired with bulk IN 0x82.
++	 * (WizGery/ps5-mediatek-fixes 0003, ported to the 7.3 probe code.)
++	 */
++	if (le16_to_cpu(interface_to_usbdev(intf)->descriptor.idVendor) == 0x0e8d &&
++	    le16_to_cpu(interface_to_usbdev(intf)->descriptor.idProduct) == 0x3603 && ps5_tx_ep) {
++		struct usb_host_interface *alt = intf->cur_altsetting;
++		int i;
++
++		for (i = 0; i < alt->desc.bNumEndpoints; i++) {
++			struct usb_endpoint_descriptor *ep = &alt->endpoint[i].desc;
++
++			if (usb_endpoint_is_bulk_out(ep) &&
++			    ep->bEndpointAddress == ps5_tx_ep) {
++				data->bulk_tx_ep = ep;
++				dev_info(&intf->dev, "PS5: using bulk OUT 0x%02x for ACL\n",
++					 ps5_tx_ep);
++			}
++		}
++	}
++
++        /*
++         * PS5 Pro Viola 0e8d:3605
++         * v1.4 experiment: ACL Bulk-OUT endpoint 0x0d.
++         * IF3, HCI commands, firmware and RX remain unchanged.
++         */
++        if (le16_to_cpu(interface_to_usbdev(intf)->descriptor.idVendor) == 0x0e8d &&
++            le16_to_cpu(interface_to_usbdev(intf)->descriptor.idProduct) == 0x3605 &&
++            intf->cur_altsetting->desc.bInterfaceNumber == 3) {
++                struct usb_host_interface *alt = intf->cur_altsetting;
++                int i;
++
++                for (i = 0; i < alt->desc.bNumEndpoints; i++) {
++                        struct usb_endpoint_descriptor *ep =
++                                &alt->endpoint[i].desc;
++
++                        if (ep->bEndpointAddress == 0x0d &&
++                            usb_endpoint_is_bulk_out(ep)) {
++                                data->bulk_tx_ep = ep;
++                                break;
++                        }
++                }
++
++                if (i == alt->desc.bNumEndpoints) {
++                        dev_err(&intf->dev,
++                                "Viola v1.4: ACL OUT 0x0d missing\n");
++                        err = -ENODEV;
++                        goto err_free_data;
++                }
++
++                dev_info(&intf->dev,
++                         "Viola v1.4: ACL OUT 0x0d selected\n");
++        }
++
++
+ 	if (id->driver_info & BTUSB_AMP) {
+ 		data->cmdreq_type = USB_TYPE_CLASS | 0x01;
+ 		data->cmdreq = 0x2b;
  	} else {
  		data->cmdreq_type = USB_TYPE_CLASS;
  		data->cmdreq = 0x00;
@@ -1201,7 +1416,7 @@ index dc7191bf4234..10367dc8baf0 100644
  	}
  
  	data->udev = interface_to_usbdev(intf);
-@@ -4490,6 +4529,17 @@ static int btusb_probe(struct usb_interface *intf,
+@@ -4490,6 +4692,17 @@ static int btusb_probe(struct usb_interface *intf,
  	if (id->driver_info & BTUSB_INVALID_LE_STATES)
  		hci_set_quirk(hdev, HCI_QUIRK_BROKEN_LE_STATES);
  
@@ -1219,7 +1434,7 @@ index dc7191bf4234..10367dc8baf0 100644
  	if (id->driver_info & BTUSB_BROKEN_EXT_SCAN)
  		hci_set_quirk(hdev, HCI_QUIRK_BROKEN_EXT_SCAN);
  
-@@ -4549,7 +4599,7 @@ static int btusb_probe(struct usb_interface *intf,
+@@ -4549,7 +4762,7 @@ static int btusb_probe(struct usb_interface *intf,
  			data->diag = NULL;
  	}
  
@@ -1228,6 +1443,22 @@ index dc7191bf4234..10367dc8baf0 100644
  		usb_enable_autosuspend(data->udev);
  
  	data->poll_sync = enable_poll_sync;
+@@ -4855,9 +5068,15 @@ MODULE_PARM_DESC(force_scofix, "Force fixup of wrong SCO buffers size");
+ module_param(enable_autosuspend, bool, 0644);
+ MODULE_PARM_DESC(enable_autosuspend, "Enable USB autosuspend by default");
+ 
++module_param(ps5_tx_ep, int, 0644);
++MODULE_PARM_DESC(ps5_tx_ep, "PS5 MediaTek BT: bulk OUT endpoint for ACL (0 = default)");
++
+ module_param(reset, bool, 0644);
+ MODULE_PARM_DESC(reset, "Send HCI reset command on initialization");
+ 
++module_param(ps5_ep_resync, bool, 0644);
++MODULE_PARM_DESC(ps5_ep_resync, "PS5 Pro MediaTek BT: resync endpoints after firmware setup");
++
+ MODULE_AUTHOR("Marcel Holtmann <marcel@holtmann.org>");
+ MODULE_DESCRIPTION("Generic Bluetooth USB driver ver " VERSION);
+ MODULE_VERSION(VERSION);
 diff --git a/drivers/cpufreq/Kconfig.x86 b/drivers/cpufreq/Kconfig.x86
 index d6190b8dde4b..3271ce90aec9 100644
 --- a/drivers/cpufreq/Kconfig.x86
