@@ -72,6 +72,9 @@ The Wi-Fi driver (NXP mwifiex) is in `oot/mwifiex`, already patched for 7.3.
 `build.sh` copies it to `drivers/net/wireless/nxp-wlan` and builds it with the kernel.
 Nothing else is needed.
 
+MT7921 PCIe Wi-Fi (`CONFIG_MT7921E`) is testing and off by default.
+To turn it on, set `CONFIG_MT7921E=m` in `.config`.
+
 ### Roll back
 
 The script prints the backup folder. Copy the old files back:
