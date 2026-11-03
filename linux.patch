@@ -9752,10 +9752,10 @@ index 000000000000..5a53c5f719bc
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/ps5/fan.c b/drivers/ps5/fan.c
 new file mode 100644
-index 000000000000..bee520234609
+index 000000000000..d5a077532262
 --- /dev/null
 +++ b/drivers/ps5/fan.c
-@@ -0,0 +1,1054 @@
+@@ -0,0 +1,1050 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +
 +#include <linux/module.h>
@@ -10231,10 +10231,6 @@ index 000000000000..bee520234609
 +	return false;
 +}
 +
-+/*
-+ * The PS5 Pro hands over with the MainSoC zone in manual mode. Nothing else
-+ * drives the fan, so return it to firmware auto.
-+ */
 +static int ps5_fan_reclaim_mainsoc(struct ps5_fan_data *data, u8 mode)
 +{
 +	u8 request[4] = { PS5_ZONE_MAINSOC };
@@ -10280,7 +10276,7 @@ index 000000000000..bee520234609
 +			 ret ? 0 : mode[2], ret);
 +		if (ret || mode[2] == PS5_FAN_MODE_AUTO)
 +			continue;
-+		if (zone == PS5_ZONE_MAINSOC && ps5_fan_on_viola())
++		if (zone == PS5_ZONE_MAINSOC)
 +			ret = ps5_fan_reclaim_mainsoc(data, mode[2]);
 +		else
 +			ret = -EBUSY;
